@@ -42,11 +42,12 @@ uses
    sysutils, {$IFOPT C+} rtlutils, {$ENDIF} fileutils, stringutils,
    dateutils, genericutils, hashfunctions, hashtable, hashset,
    plasticarrays, exceptions, unicode, ropes, wires, canonicalstrings,
-   dom, webdom, htmlparser, json;
+   dom, webdom, htmlparser, json, process;
 
 var
    Quiet: Boolean = false;
    Version: Word = (*$I version.inc *); // unsigned integer from 0 .. 65535
+   HighlighterExecutablePath: AnsiString = '';
    OutputDirectory: AnsiString;
    SearchIndexJsonFile: Text;
    IsFirstSearchIndexItem: Boolean = true;
@@ -1700,8 +1701,10 @@ var
    F: Text;
    CurrentElement: TElement;
    AsJSON, StartingNewJSONObject: Boolean;
+   InPreElement: Boolean;
    JSONContents: UTF8String;
    HTMLContents: UTF8String;
+   Highlighter: TProcess;
 
    function AutoclosedBy(const Before: TElement; const After: TNode): Boolean;
    begin
@@ -1879,6 +1882,7 @@ Result := False;
    var
       IsExcluder: Boolean;
       AttributeCount: Cardinal;
+      HighlighterOutput: TStringList;
    begin
       if (InSplit and Element.HasAttribute(kExcludingAttribute[vSplit])) then
          exit;
@@ -1888,6 +1892,23 @@ Result := False;
       begin
          WriteJSON(']');
          WriteHTML('</' + Element.LocalName.AsString + '>');
+         if (Element.IsIdentity(nsHTML, ePre) and (HighlighterExecutablePath <> '')) then
+         begin
+            HighlighterOutput := TStringList.Create;
+            Highlighter.Execute;
+            // TODO: JSONContents should be the actual input for the
+            // following Highlighter.Input.Write call;
+            Highlighter.Input.Write(HTMLContents[1], Length(HTMLContents));
+            Highlighter.CloseInput;
+            HighlighterOutput.LoadFromStream(Highlighter.Output);
+            Highlighter.WaitOnExit;
+            Highlighter.CloseOutput;
+            Write(F, Trim(HighlighterOutput.Text));
+            HighlighterOutput.Free;
+            JSONContents := '';
+            HTMLContents := '';
+            AsJSON := False;
+         end;
       end;
       if (Element.ParentNode is TElement) then
          CurrentElement := TElement(Element.ParentNode)
@@ -1906,11 +1927,20 @@ begin
    AsJSON := False;
    JSONContents := '';
    HTMLContents := '';
+   Highlighter := TProcess.Create(nil);
+   Highlighter.Options := [poUsePipes];
+   Highlighter.Executable := HighlighterExecutablePath;
+
    repeat
       Assert(Assigned(Current));
       StartingNewJSONObject := False;
       if (Current is TElement) then
       begin
+         if ((Current as TElement).IsIdentity(nsHTML, ePre)) then
+         begin
+            AsJSON := True;
+            StartingNewJSONObject := True;
+         end;
          if (InSplit and TElement(Current).HasAttribute(kExcludingAttribute[vSplit])) then
          begin
             WalkToNextSkippingChildren(Current, Document, @WalkOut);
@@ -1941,6 +1971,7 @@ begin
    until False;
    Writeln(F);
    Close(F);
+   Highlighter.Free;
 end;
 
 function Split(const Document: TDocument; var BigTOC: TElement; const Base: AnsiString): Boolean; // True = success, False = failed
@@ -2619,11 +2650,23 @@ var
    Variant: TAllVariants;
 begin
    Result := False;
+   if (ParamStr(1) = '--quiet') then
+   begin
+      Quiet := true;
+      ParamOffset := 1;
+   end;
    if (ParamCount() <> 4) then
-      if ((ParamCount() = 5) and (ParamStr(1) = '--quiet')) then
+      if (ParamCount() = 5) then
       begin
-         Quiet := true;
-         ParamOffset := 1;
+         if (not Quiet) then
+         begin
+            HighlighterExecutablePath := ParamStr(5);
+         end
+      end
+      else
+      if ((ParamCount() = 6) and Quiet) then
+      begin
+         HighlighterExecutablePath := ParamStr(6);
       end
       else
       if ((ParamCount() = 1) and (ParamStr(1) = '--version')) then
@@ -2635,7 +2678,7 @@ begin
       begin
          Writeln('wattsi: invalid arguments');
          Writeln('syntax:');
-         Writeln('  wattsi [--quiet] <source-file> <output-directory> <caniuse.json> <bugs.csv>');
+         Writeln('  wattsi [--quiet] <source-file> <output-directory> <caniuse.json> <bugs.csv> <pre-highlight.py>');
          Writeln('  wattsi --version');
          exit;
       end;
