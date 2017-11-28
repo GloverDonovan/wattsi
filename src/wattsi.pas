@@ -122,6 +122,12 @@ var
    Browsers: array[TBrowserIndex] of TBrowser;
    Features: TFeatureMap;
 
+procedure Inform(Message: UTF8String);
+begin
+   if (not Quiet) then
+      Writeln(Message);
+end;
+
 procedure ProcessDocument(const Document: TDocument; const Variant: TVariants; out BigTOC: TElement);
 type
    PElementListNode = ^TElementListNode;
@@ -1931,6 +1937,11 @@ begin
    Highlighter.Options := [poUsePipes];
    Highlighter.Executable := HighlighterExecutablePath;
 
+   if (HighlighterExecutablePath <> '') then
+      Inform('Highlighting and saving ' + ExtractFileName(FileName))
+   else
+      Inform('Saving ' + ExtractFileName(FileName));
+
    repeat
       Assert(Assigned(Current));
       StartingNewJSONObject := False;
@@ -2056,6 +2067,7 @@ begin
    Document.DocumentElement.InsertBefore(Link, FirstChild);
    // find body
    Current := Document;
+   Inform('Splitting...');
    repeat
       WalkToNext(Current, Document, nil)
    until (Current is TElement) and TElement(Current).IsIdentity(nsHTML, eBody);
@@ -2381,12 +2393,6 @@ begin
       if (not Result) then
          Writeln('Could not find ID in: ', SpecURL);
    {$ENDIF}
-end;
-
-procedure Inform(Message: UTF8String);
-begin
-   if (not Quiet) then
-      Writeln(Message);
 end;
 
 // http://wiki.freepascal.org/UTF8_strings_and_characters#Search_and_copy
